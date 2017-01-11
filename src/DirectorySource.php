@@ -2,6 +2,7 @@
 
 namespace BrowscapHelper\Source;
 
+use FileLoader\Loader;
 use Monolog\Logger;
 use Symfony\Component\Console\Output\OutputInterface;
 
@@ -18,11 +19,17 @@ class DirectorySource implements SourceInterface
     private $dir = null;
 
     /**
+     * @var \FileLoader\Loader
+     */
+    private $loader = null;
+
+    /**
      * @param string $dir
      */
     public function __construct($dir)
     {
-        $this->dir = $dir;
+        $this->dir    = $dir;
+        $this->loader = new Loader();
     }
 
     /**
@@ -34,35 +41,50 @@ class DirectorySource implements SourceInterface
      */
     public function getUserAgents(Logger $logger, OutputInterface $output, $limit = 0)
     {
-        $allLines = [];
-        $files    = scandir($this->dir, SCANDIR_SORT_ASCENDING);
+        $counter   = 0;
+        $allLines  = [];
+        $files     = scandir($this->dir, SCANDIR_SORT_ASCENDING);
 
         foreach ($files as $filename) {
+            if ($limit && $counter >= $limit) {
+                return;
+            }
+
             $file = new \SplFileInfo($this->dir . DIRECTORY_SEPARATOR . $filename);
 
             if (!$file->isFile()) {
                 continue;
             }
 
-            $lines = file($file->getPathname());
+            $this->loader->setLocalFile($file->getPathname());
 
-            if (empty($lines)) {
-                $output->writeln('Skipping empty file "' . $file->getPathname() . '"');
-                continue;
-            }
+            /** @var \GuzzleHttp\Psr7\Response $response */
+            $response = $this->loader->load();
 
-            foreach ($lines as $line) {
+            /** @var \FileLoader\Psr7\Stream $stream */
+            $stream = $response->getBody();
+
+            $stream->read(1);
+            $stream->rewind();
+
+            while (!$stream->eof()) {
+                $line = $stream->read(8192);
+
+                if ($limit && $counter >= $limit) {
+                    return;
+                }
+
+                if (empty($line)) {
+                    continue;
+                }
+
                 if (isset($allLines[$line])) {
                     continue;
                 }
 
-                if ($limit && count($allLines) >= $limit) {
-                    return;
-                }
-
-                $allLines[$line] = 1;
-
                 yield $line;
+                $allLines[$line] = 1;
+                ++$counter;
             }
         }
     }
@@ -85,21 +107,58 @@ class DirectorySource implements SourceInterface
                 continue;
             }
 
-            $lines = file($file->getPathname());
+            $this->loader->setLocalFile($file->getPathname());
 
-            if (empty($lines)) {
-                $output->writeln('Skipping empty file "' . $file->getPathname() . '"');
-                continue;
-            }
+            /** @var \GuzzleHttp\Psr7\Response $response */
+            $response = $this->loader->load();
 
-            foreach ($lines as $line) {
+            /** @var \FileLoader\Psr7\Stream $stream */
+            $stream = $response->getBody();
+
+            $stream->read(1);
+            $stream->rewind();
+
+            while (!$stream->eof()) {
+                $line = $stream->read(8192);
+
+                if (empty($line)) {
+                    continue;
+                }
+
                 if (isset($allTests[$line])) {
                     continue;
                 }
 
-                $allTests[$line] = 1;
+                $test = [
+                    'ua'         => $line,
+                    'properties' => [
+                        'Browser_Name'            => null,
+                        'Browser_Type'            => null,
+                        'Browser_Bits'            => null,
+                        'Browser_Maker'           => null,
+                        'Browser_Modus'           => null,
+                        'Browser_Version'         => null,
+                        'Platform_Codename'       => null,
+                        'Platform_Marketingname'  => null,
+                        'Platform_Version'        => null,
+                        'Platform_Bits'           => null,
+                        'Platform_Maker'          => null,
+                        'Platform_Brand_Name'     => null,
+                        'Device_Name'             => null,
+                        'Device_Maker'            => null,
+                        'Device_Type'             => null,
+                        'Device_Pointing_Method'  => null,
+                        'Device_Dual_Orientation' => null,
+                        'Device_Code_Name'        => null,
+                        'Device_Brand_Name'       => null,
+                        'RenderingEngine_Name'    => null,
+                        'RenderingEngine_Version' => null,
+                        'RenderingEngine_Maker'   => null,
+                    ],
+                ];
 
-                yield [$line => []];
+                yield [$line => $test];
+                $allTests[$line] = 1;
             }
         }
     }
