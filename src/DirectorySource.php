@@ -3,8 +3,13 @@
 namespace BrowscapHelper\Source;
 
 use FileLoader\Loader;
-use Monolog\Logger;
+use Psr\Log\LoggerInterface;
 use Symfony\Component\Console\Output\OutputInterface;
+use UaResult\Browser\Browser;
+use UaResult\Device\Device;
+use UaResult\Engine\Engine;
+use UaResult\Os\Os;
+use Wurfl\Request\GenericRequestFactory;
 
 /**
  * Class DirectorySource
@@ -24,22 +29,34 @@ class DirectorySource implements SourceInterface
     private $loader = null;
 
     /**
-     * @param string $dir
+     * @var \Symfony\Component\Console\Output\OutputInterface
      */
-    public function __construct($dir)
+    private $output = null;
+
+    /**
+     * @var \Psr\Log\LoggerInterface
+     */
+    private $logger = null;
+
+    /**
+     * @param \Psr\Log\LoggerInterface                          $logger
+     * @param \Symfony\Component\Console\Output\OutputInterface $output
+     * @param string                                            $dir
+     */
+    public function __construct(LoggerInterface $logger, OutputInterface $output, $dir)
     {
+        $this->logger = $logger;
+        $this->output = $output;
         $this->dir    = $dir;
         $this->loader = new Loader();
     }
 
     /**
-     * @param \Monolog\Logger                                   $logger
-     * @param \Symfony\Component\Console\Output\OutputInterface $output
-     * @param int                                               $limit
+     * @param int $limit
      *
-     * @return \Generator
+     * @return string[]
      */
-    public function getUserAgents(Logger $logger, OutputInterface $output, $limit = 0)
+    public function getUserAgents($limit = 0)
     {
         $counter   = 0;
         $allLines  = [];
@@ -55,6 +72,8 @@ class DirectorySource implements SourceInterface
             if (!$file->isFile()) {
                 continue;
             }
+
+            $this->output->writeln('    reading file ' . str_pad($file->getPathname(), 100, ' ', STR_PAD_RIGHT));
 
             $this->loader->setLocalFile($file->getPathname());
 
@@ -90,12 +109,9 @@ class DirectorySource implements SourceInterface
     }
 
     /**
-     * @param \Monolog\Logger                                   $logger
-     * @param \Symfony\Component\Console\Output\OutputInterface $output
-     *
-     * @return \Generator
+     * @return \UaResult\Result\Result[]
      */
-    public function getTests(Logger $logger, OutputInterface $output)
+    public function getTests()
     {
         $allTests = [];
         $files    = scandir($this->dir, SCANDIR_SORT_ASCENDING);
@@ -106,6 +122,8 @@ class DirectorySource implements SourceInterface
             if (!$file->isFile()) {
                 continue;
             }
+
+            $this->output->writeln('    reading file ' . str_pad($file->getPathname(), 100, ' ', STR_PAD_RIGHT));
 
             $this->loader->setLocalFile($file->getPathname());
 
@@ -129,35 +147,13 @@ class DirectorySource implements SourceInterface
                     continue;
                 }
 
-                $test = [
-                    'ua'         => $line,
-                    'properties' => [
-                        'Browser_Name'            => null,
-                        'Browser_Type'            => null,
-                        'Browser_Bits'            => null,
-                        'Browser_Maker'           => null,
-                        'Browser_Modus'           => null,
-                        'Browser_Version'         => null,
-                        'Platform_Codename'       => null,
-                        'Platform_Marketingname'  => null,
-                        'Platform_Version'        => null,
-                        'Platform_Bits'           => null,
-                        'Platform_Maker'          => null,
-                        'Platform_Brand_Name'     => null,
-                        'Device_Name'             => null,
-                        'Device_Maker'            => null,
-                        'Device_Type'             => null,
-                        'Device_Pointing_Method'  => null,
-                        'Device_Dual_Orientation' => null,
-                        'Device_Code_Name'        => null,
-                        'Device_Brand_Name'       => null,
-                        'RenderingEngine_Name'    => null,
-                        'RenderingEngine_Version' => null,
-                        'RenderingEngine_Maker'   => null,
-                    ],
-                ];
+                $request  = (new GenericRequestFactory())->createRequestForUserAgent($line);
+                $browser  = new Browser(null);
+                $device   = new Device(null, null);
+                $platform = new Os(null, null);
+                $engine   = new Engine(null);
 
-                yield [$line => $test];
+                yield $line => new Result($request, $device, $platform, $browser, $engine);
                 $allTests[$line] = 1;
             }
         }
