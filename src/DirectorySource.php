@@ -13,7 +13,7 @@ namespace BrowscapHelper\Source;
 
 use FileLoader\Loader;
 use Psr\Log\LoggerInterface;
-use Symfony\Component\Console\Output\OutputInterface;
+use Symfony\Component\Finder\Finder;
 use UaResult\Browser\Browser;
 use UaResult\Device\Device;
 use UaResult\Engine\Engine;
@@ -39,24 +39,17 @@ class DirectorySource implements SourceInterface
     private $loader = null;
 
     /**
-     * @var \Symfony\Component\Console\Output\OutputInterface
-     */
-    private $output = null;
-
-    /**
      * @var \Psr\Log\LoggerInterface
      */
     private $logger = null;
 
     /**
-     * @param \Psr\Log\LoggerInterface                          $logger
-     * @param \Symfony\Component\Console\Output\OutputInterface $output
-     * @param string                                            $dir
+     * @param \Psr\Log\LoggerInterface $logger
+     * @param string                   $dir
      */
-    public function __construct(LoggerInterface $logger, OutputInterface $output, $dir)
+    public function __construct(LoggerInterface $logger, $dir)
     {
         $this->logger = $logger;
-        $this->output = $output;
         $this->dir    = $dir;
         $this->loader = new Loader();
     }
@@ -68,53 +61,15 @@ class DirectorySource implements SourceInterface
      */
     public function getUserAgents($limit = 0)
     {
-        $counter   = 0;
-        $allLines  = [];
-        $files     = scandir($this->dir, SCANDIR_SORT_ASCENDING);
+        $counter = 0;
 
-        foreach ($files as $filename) {
+        foreach ($this->loadFromPath() as $line) {
             if ($limit && $counter >= $limit) {
                 return;
             }
 
-            $file = new \SplFileInfo($this->dir . DIRECTORY_SEPARATOR . $filename);
-
-            if (!$file->isFile()) {
-                continue;
-            }
-
-            $this->output->writeln('    reading file ' . str_pad($file->getPathname(), 100, ' ', STR_PAD_RIGHT));
-
-            $this->loader->setLocalFile($file->getPathname());
-
-            /** @var \GuzzleHttp\Psr7\Response $response */
-            $response = $this->loader->load();
-
-            /** @var \FileLoader\Psr7\Stream $stream */
-            $stream = $response->getBody();
-
-            $stream->read(1);
-            $stream->rewind();
-
-            while (!$stream->eof()) {
-                $line = $stream->read(8192);
-
-                if ($limit && $counter >= $limit) {
-                    return;
-                }
-
-                if (empty($line)) {
-                    continue;
-                }
-
-                if (isset($allLines[$line])) {
-                    continue;
-                }
-
-                yield $line;
-                $allLines[$line] = 1;
-                ++$counter;
-            }
+            yield $line;
+            ++$counter;
         }
     }
 
@@ -123,17 +78,38 @@ class DirectorySource implements SourceInterface
      */
     public function getTests()
     {
-        $allTests = [];
-        $files    = scandir($this->dir, SCANDIR_SORT_ASCENDING);
+        foreach ($this->loadFromPath() as $line) {
+            $request  = (new GenericRequestFactory())->createRequestForUserAgent($line);
+            $browser  = new Browser(null);
+            $device   = new Device(null, null);
+            $platform = new Os(null, null);
+            $engine   = new Engine(null);
 
-        foreach ($files as $filename) {
-            $file = new \SplFileInfo($this->dir . DIRECTORY_SEPARATOR . $filename);
+            yield $line => new Result($request, $device, $platform, $browser, $engine);
+        }
+    }
 
+    /**
+     * @return \Generator
+     */
+    private function loadFromPath()
+    {
+        $allLines = [];
+        $finder   = new Finder();
+        $finder->files();
+        $finder->name('*.php');
+        $finder->ignoreDotFiles(true);
+        $finder->ignoreVCS(true);
+        $finder->sortByName();
+        $finder->ignoreUnreadableDirs();
+        $finder->in($this->dir);
+
+        foreach ($finder as $file) {
             if (!$file->isFile()) {
                 continue;
             }
 
-            $this->output->writeln('    reading file ' . str_pad($file->getPathname(), 100, ' ', STR_PAD_RIGHT));
+            $this->logger->info('    reading file ' . str_pad($file->getPathname(), 100, ' ', STR_PAD_RIGHT));
 
             $this->loader->setLocalFile($file->getPathname());
 
@@ -153,18 +129,14 @@ class DirectorySource implements SourceInterface
                     continue;
                 }
 
-                if (isset($allTests[$line])) {
+                $line = trim($line);
+
+                if (isset($allLines[$line])) {
                     continue;
                 }
 
-                $request  = (new GenericRequestFactory())->createRequestForUserAgent($line);
-                $browser  = new Browser(null);
-                $device   = new Device(null, null);
-                $platform = new Os(null, null);
-                $engine   = new Engine(null);
-
-                yield $line => new Result($request, $device, $platform, $browser, $engine);
-                $allTests[$line] = 1;
+                yield $line;
+                $allLines[$line] = 1;
             }
         }
     }
